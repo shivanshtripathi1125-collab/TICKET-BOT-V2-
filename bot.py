@@ -3,32 +3,29 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import os
 import asyncio
+import json
 from datetime import datetime, timedelta
 from flask import Flask
 import threading
 
 # -------------------------------
-# 🔧 CONFIGURATION
+# 🔧 CONFIG
 # -------------------------------
 TOKEN = os.getenv("BOT_TOKEN")
 GUILD_ID = 1424815111541096530
 LOG_CHANNEL_ID = 1434241829733404692
 COOLDOWN_HOURS = 48
 INACTIVITY_CLOSE_MINUTES = 15
+YOUTUBE_CHANNEL_URL = "https://www.youtube.com/@RASH-TECH"
+APP_FILE = "apps.json"
+EMBED_COLOR = 0x00BFFF  # Electric blue for Premium Tech look
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
 # -------------------------------
-# 🧩 SIMPLE IN-MEMORY DATABASE
-# -------------------------------
-tickets = {}  # user_id -> channel_id
-cooldowns = {}  # user_id -> datetime
-last_activity = {}  # channel_id -> datetime
-
-# -------------------------------
-# 🌐 FLASK KEEP-ALIVE SERVER
+# 🌐 FLASK KEEP-ALIVE
 # -------------------------------
 app = Flask(__name__)
 
@@ -36,21 +33,23 @@ app = Flask(__name__)
 def home():
     return "TICKET BOT V2 is running!"
 
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
-
-threading.Thread(target=run_flask).start()
+threading.Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
 
 # -------------------------------
-# 📦 EMBED HELPER
+# 🧩 EMBED HELPER
 # -------------------------------
-def make_embed(title=None, description=None, color=0x5865F2):
+def make_embed(title=None, description=None, color=EMBED_COLOR):
     embed = discord.Embed(title=title, description=description, color=color)
+    embed.set_footer(text="⚡ RASH TECH | Ticket Bot V2")
     return embed
 
 # -------------------------------
 # ⏱️ COOLDOWN SYSTEM
 # -------------------------------
+cooldowns = {}  # user_id -> datetime
+tickets = {}  # user_id -> channel_id
+last_activity = {}  # channel_id -> datetime
+
 def set_cooldown(user_id):
     cooldowns[user_id] = datetime.utcnow() + timedelta(hours=COOLDOWN_HOURS)
 
@@ -81,35 +80,56 @@ async def check_inactivity():
             channel = bot.get_channel(channel_id)
             if channel:
                 await send_transcript(channel)
-                await channel.delete(reason="Inactive for too long")
+                await channel.delete(reason="Inactive ticket")
             del last_activity[channel_id]
 
 # -------------------------------
-# 📜 TRANSCRIPT SYSTEM
+# 📜 APP MANAGEMENT
+# -------------------------------
+def load_apps():
+    if os.path.exists(APP_FILE):
+        with open(APP_FILE, "r") as f:
+            return json.load(f)
+    else:
+        # initial apps
+        apps = {
+            "🎬 KINEMASTER premium": "https://link-target.net/1425230/7EdG6nu9eJ1G",
+            "🎵 Spotify Premium": "https://direct-link.net/1425230/Ihg8hRfZw09V",
+            "📞 Truecaller premium": "https://link-target.net/1425230/uT1uGZ0lP8MW",
+            "🎥 CineTV premium": "https://link-target.net/1425230/Efpk9wEmqABS"
+        }
+        with open(APP_FILE, "w") as f:
+            json.dump(apps, f)
+        return apps
+
+def save_apps(apps):
+    with open(APP_FILE, "w") as f:
+        json.dump(apps, f)
+
+apps = load_apps()
+
+# -------------------------------
+# 📜 TRANSCRIPT
 # -------------------------------
 async def send_transcript(channel: discord.TextChannel):
     try:
         log_channel = channel.guild.get_channel(LOG_CHANNEL_ID)
         if not log_channel:
             return
-
         messages = []
         async for msg in channel.history(limit=200, oldest_first=True):
             ts = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
             author = f"{msg.author} ({msg.author.id})"
             content = msg.clean_content or ""
             messages.append(f"[{ts}] {author}: {content}")
-
         transcript_text = "\n".join(messages)
         file_name = f"transcript_{channel.name}_{channel.id}.txt"
         with open(file_name, "w", encoding="utf-8") as f:
             f.write(transcript_text)
-
         await log_channel.send(
             embed=make_embed("Ticket Closed", f"Transcript from {channel.mention}"),
             file=discord.File(file_name)
         )
-
         os.remove(file_name)
     except Exception as e:
         print("Transcript error:", e)
@@ -131,7 +151,7 @@ class CloseTicketView(discord.ui.View):
         await interaction.response.send_message("✅ Ticket closed.", ephemeral=True)
 
 # -------------------------------
-# 🚀 BOT READY EVENT
+# 🚀 BOT READY
 # -------------------------------
 @bot.event
 async def on_ready():
@@ -190,14 +210,21 @@ async def ticket(interaction: discord.Interaction):
         category=category
     )
 
+    # List apps in embed
+    apps_list = "\n".join([f"{name}" for name in apps.keys()])
+
     welcome_embed = make_embed(
         title="🎟️ Welcome to Your Ticket!",
         description=(
             f"Hello {user.mention}, thank you for opening a ticket!\n\n"
             "**Here are the premium apps we currently provide:**\n"
-            "• Spotify Premium\n• Netflix Premium\n• YouTube Premium\n\n"
+            f"{apps_list}\n\n"
             "🕓 *New apps coming soon!*\n\n"
-            "Please type the **app name** below to continue."
+            "💡 **How It Works:**\n"
+            "1️⃣ Type the app name you want below.\n"
+            "2️⃣ Complete YouTube verification.\n"
+            "3️⃣ Receive your download link in DM.\n\n"
+            "⚠️ You can only create one ticket every 48 hours."
         )
     )
     await channel.send(embed=welcome_embed)
@@ -220,22 +247,18 @@ async def on_message(message):
         return
     update_ticket_activity(message.channel.id)
 
-    apps = {
-        "spotify": {"name": "Spotify Premium", "link": "https://example.com/spotify"},
-        "netflix": {"name": "Netflix Premium", "link": "https://example.com/netflix"},
-        "youtube": {"name": "YouTube Premium", "link": "https://example.com/youtube"}
-    }
-
-    content = message.content.lower().strip()
-    app = apps.get(content)
-    if not app:
+    content = message.content.strip()
+    app_link = apps.get(content)
+    if not app_link:
         return
 
     member = message.author
     ask_embed = make_embed(
-        "📸 YouTube Subscription Verification",
-        f"{member.mention}, please upload a **screenshot** showing you are subscribed to our YouTube channel.\n"
-        "You have **2 minutes** to send it here."
+        "🎥 YouTube Subscription Verification",
+        f"{member.mention}, before we can send your premium app link, please **subscribe to our YouTube channel**:\n\n"
+        f"🔗 [👉 Click here to Subscribe]({YOUTUBE_CHANNEL_URL})\n\n"
+        f"After subscribing, upload a **screenshot here** ({message.channel.mention}) as proof.\n"
+        "⏳ You have 2 minutes to send it."
     )
     await message.channel.send(embed=ask_embed)
 
@@ -249,23 +272,24 @@ async def on_message(message):
     try:
         reply = await bot.wait_for("message", timeout=120, check=check)
         screenshot = reply.attachments[0]
+
         confirm_embed = make_embed(
             "✅ Verification Successful",
             f"Thanks {member.mention}! Screenshot received. Sending your download link..."
         )
         await message.channel.send(embed=confirm_embed)
 
-        embed = make_embed(
-            title=f"{app['name']} — Download",
-            description=f"Here is your download link:\n{app['link']}"
+        download_embed = make_embed(
+            title=f"{content} — Download Link",
+            description=f"Here is your download link:\n{app_link}"
         )
         view = CloseTicketView(message.channel.id)
-        await member.send(embed=embed)
+        await member.send(embed=download_embed)
         await message.channel.send(
             embed=make_embed(
                 "📥 Download Sent",
-                f"I've sent you the download link in DM.\n"
-                "If you are satisfied, you can close this ticket below, "
+                f"I've sent the download link in DM.\n"
+                f"If you are satisfied, you can close this ticket using the button below, "
                 f"or it will auto-close after {INACTIVITY_CLOSE_MINUTES} minutes of inactivity."
             ),
             view=view
@@ -279,30 +303,44 @@ async def on_message(message):
         await message.channel.send(embed=timeout_embed)
 
 # -------------------------------
-# ⚙️ OWNER COMMANDS
+# ⚙️ OWNER ADMIN COMMANDS
 # -------------------------------
-@tree.command(name="ticket_close", description="Close a user's ticket.")
+@tree.command(name="addapp", description="Add a premium app with download link (Admin Only)")
+@app_commands.describe(app_name="Name of the app (with emoji)", link="Download link")
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-async def ticket_close(interaction: discord.Interaction):
+async def add_app(interaction: discord.Interaction, app_name: str, link: str):
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
+        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
         return
-    await interaction.response.send_message("Closing ticket...", ephemeral=True)
-    await send_transcript(interaction.channel)
-    await interaction.channel.delete(reason=f"Closed by {interaction.user}")
+    apps[app_name] = link
+    save_apps(apps)
+    await interaction.response.send_message(f"✅ App **{app_name}** added successfully.", ephemeral=True)
 
-@tree.command(name="remove_cooldown", description="Remove cooldown from a user.")
-@app_commands.describe(user="The user to remove cooldown from.")
+@tree.command(name="removeapp", description="Remove a premium app (Admin Only)")
+@app_commands.describe(app_name="Name of the app to remove (with emoji)")
 @app_commands.guilds(discord.Object(id=GUILD_ID))
-async def remove_cd(interaction: discord.Interaction, user: discord.Member):
+async def remove_app(interaction: discord.Interaction, app_name: str):
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("❌ You don't have permission.", ephemeral=True)
+        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
         return
-    remove_cooldown(user.id)
-    await interaction.response.send_message(
-        embed=make_embed("✅ Cooldown Removed", f"Cooldown removed for {user.mention}."),
-        ephemeral=True
-    )
+    if app_name in apps:
+        del apps[app_name]
+        save_apps(apps)
+        await interaction.response.send_message(f"✅ App **{app_name}** removed successfully.", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ App not found.", ephemeral=True)
+
+@tree.command(name="listapps", description="List all premium apps (Admin Only)")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+async def list_apps(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
+        return
+    if not apps:
+        await interaction.response.send_message("No apps available.", ephemeral=True)
+        return
+    app_list = "\n".join([f"{name}" for name in apps.keys()])
+    await interaction.response.send_message(embed=make_embed("📦 Premium Apps", app_list), ephemeral=True)
 
 # -------------------------------
 # 🚀 RUN BOT
