@@ -62,7 +62,7 @@ def check_cooldown(user_id):
         return False, 0
     return True, round(remaining / 3600, 1)
 
-def remove_cooldown(user_id):
+def remove_cooldown_user(user_id):
     if user_id in cooldowns:
         del cooldowns[user_id]
 
@@ -91,7 +91,6 @@ def load_apps():
         with open(APP_FILE, "r") as f:
             return json.load(f)
     else:
-        # initial apps
         apps = {
             "🎬 KINEMASTER premium": "https://link-target.net/1425230/7EdG6nu9eJ1G",
             "🎵 Spotify Premium": "https://direct-link.net/1425230/Ihg8hRfZw09V",
@@ -341,6 +340,23 @@ async def list_apps(interaction: discord.Interaction):
         return
     app_list = "\n".join([f"{name}" for name in apps.keys()])
     await interaction.response.send_message(embed=make_embed("📦 Premium Apps", app_list), ephemeral=True)
+
+@tree.command(
+    name="remove_cooldown",
+    description="Remove a user's ticket cooldown (Admin Only)"
+)
+@app_commands.describe(user="Select the user to remove cooldown from")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+async def remove_cooldown_command(interaction: discord.Interaction, user: discord.Member):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ You do not have permission.", ephemeral=True)
+        return
+
+    if user.id in cooldowns:
+        del cooldowns[user.id]
+        await interaction.response.send_message(f"✅ Cooldown removed for {user.mention}", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"ℹ️ {user.mention} does not have a cooldown.", ephemeral=True)
 
 # -------------------------------
 # 🚀 RUN BOT
